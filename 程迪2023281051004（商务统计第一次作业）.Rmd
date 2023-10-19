@@ -1,0 +1,254 @@
+---
+title: "商务统计第一次作业"
+author:
+  - 程迪 2023281051004
+documentclass: ctexart
+output:
+  rticles::ctex:
+    fig_caption: yes
+    number_sections: yes
+    toc: yes
+---
+
+
+```{r setup, include = FALSE,echo = FALSE}
+knitr::opts_chunk$set(echo = FALSE,error = FALSE, warning = FALSE, message = FALSE,out.width = "100%", split = FALSE, fig.align = "center")
+#load library
+library(tidyverse)
+library(kableExtra)
+library(lubridate)
+library(scales)
+library(plotly)
+library(patchwork)
+library(ggrepel)
+library(readr)
+```
+
+```{r}
+library(showtext)
+y2<-font_files()
+showtext_auto(enable = TRUE) 
+font_add("Songti","/System/Library/Fonts/Songti.ttc") 
+font_add("Times","/System/Library/Fonts/Supplemental/Times New Roman.ttf")
+```
+
+# 你的主要发现
+
+1. 挂售二手房的价格受多种因素影响，包括房屋建筑形式、房屋楼层总数以及分布
+
+2. 区域在售二手房的数量会对该区域的平均单价有影响
+  
+3. 在二手房平台房屋关注人数受房屋是否近地铁、能否vr看装修影响
+    
+
+# 数据介绍
+
+本报告**链家**数据获取方式如下：
+    
+报告人在2023年9月12日获取了[链家武汉二手房网站](https://wh.lianjia.com/ershoufang/)数据。
+    
+- 链家二手房网站默认显示100页，每页30套房产，因此本数据包括3000套房产信息；
+    
+- 数据包括了页面可见部分的文本信息，具体字段及说明见作业说明。
+
+ **说明：**数据仅用于教学；由于不清楚链家数据的展示规则，因此数据可能并不是武汉二手房市场的随机抽样，结论很可能有很大的偏差，甚至可能是错误的。
+    
+```{r}
+# 载入数据和预处理
+
+lj<- read_csv("/Users/cici/mem/1st_assignment_eda-cici41440-main/data/2023-09-12_cleaned.csv")
+
+# 做一些数据预处理，比如把字符型变成factor。
+lj$directions1 <- as.factor(lj$directions1)
+lj$directions2 <- as.factor(lj$directions2)
+lj$property_name <- as.factor(lj$property_name)
+lj$property_region <- as.factor(lj$property_region)
+lj$decoration <- as.factor(lj$decoration)
+lj$property_height <- as.factor(lj$property_height)
+lj$property_style <- as.factor(lj$property_style)
+lj$if_2y<- as.factor(lj$if_2y)
+lj$vr<- as.factor(lj$vr)
+lj$near_subway<- as.factor(lj$near_subway)
+lj$has_key<- as.factor(lj$has_key)
+
+```
+
+# 数据概览
+
+数据表（lj)共包括`r names(lj)`等`rncol(lj)`个变量,共`rnrow(lj)`行。表的前10行示例如下：
+
+```{r}
+lj %>% 
+  head(10) %>%
+  kable(caption = "武汉链家二手房") %>% 
+  kable_styling()
+```
+
+各变量的简短统计：
+```{r}
+summary(lj)
+```
+
+可以看到：
+
+- 直观结论1:市面上挂售二手房房屋，以精装房、板楼为主，南北朝向、中间楼层居多；平均房屋面积约100平米，二居、三居居多，平均单价1.5万元/平；房产满2年房屋过半，说明以上主流房屋流通较高。
+
+- 直观结论2：经中介渠道挂售的二手房，大部分满足随时看房及vr看装修的模式，客户了解房屋状况的方法多样，关注人数平均6人。
+
+- 直观结论3：挂售房屋超过100套的区域有白沙洲、盘龙城、四新、光谷东，这几个区域房屋体量较大
+
+# 探索性分析
+
+## 不同建筑形式与房屋每平单价的关系
+```{r}
+#剔除建筑形式暂无数据行
+lj1 <- lj %>% filter(!property_style=="暂无数据")
+ggplot(lj1,aes(x=property_style,y=price_sqm))+geom_boxplot()+coord_flip()+
+  theme_minimal() +    
+  labs(x = "建筑形式",    
+       y = "单价",    
+       title = "不同建筑形式与房屋每平单价的关系")
+ggplot(lj1,aes(x=property_style,y=price_ttl))+geom_boxplot()+coord_flip()+
+  theme_minimal() +    
+  labs(x  = "建筑形式",    
+       y = "总价",    
+       title = "不同建筑形式与房屋总价的关系")
+```
+发现：
+
+- 发现1:板楼结合的建筑房屋单价及房屋总价均超出其他形式的房屋，价格普遍偏高
+
+- 发现2：从样本量看，平房样本数量最少，说明该类房屋二手市场上流通较少
+
+## 楼栋总层数与房价的影响，根据不同楼层分面
+```{r}
+##建立新表，剔除property_height空值
+pro_h  <- lj %>%filter(!is.na(property_height))
+##出现频率最高的总楼层数
+fre_h <- table(pro_h$property_t_height) 
+sort_h <- sort(fre_h,decreasing = TRUE)
+top_h <-names(sort_h)[1:5]
+top_h
+
+
+##作图分析不同楼层的情况下楼层总数与房屋单价、房屋总价的关系
+ggplot(pro_h, aes(x = property_t_height, y = price_sqm)) +  
+  geom_point(alpha = 0.2,color="purple",size=2) +facet_wrap(~property_height, nrow = 1)+
+  theme_minimal() +    
+  labs(x = "楼层总数",    
+       y = "单价",    
+       title = "高、中、低楼层的情况下楼层总数与房屋单价的分布情况")
+
+ggplot(pro_h, aes(x = property_t_height, y = price_ttl)) +  
+  geom_point(alpha = 0.1,color="blue",size=2) +facet_wrap(~property_height, nrow = 1)+
+  theme_minimal() +    
+  labs(x = "楼层总数",    
+       y = "单价",    
+       title = "高、中、低楼层的情况下楼层总数与房屋总价的分布情况")
+##计算低、中、高楼层下，房屋均价的四分位及均值
+
+
+
+##分组计算低、中、高楼层下，房屋均价的四分位及均值，并作箱型图
+p <- pro_h %>% group_by(property_height) %>% summarise(price_sqm)
+ggplot(data = p, aes(x = property_height, y = price_sqm)) + geom_boxplot()+
+  theme_minimal() +    
+  labs(x = "楼层分布",    
+       y = "单价",    
+       title = "高、中、低楼层的情况下楼层分布与房屋单价的分布情况")
+
+```
+
+发现：
+
+- 发现1:市面上在售二手房，总楼层数频率出现最多的前5个分别为"33" "34" "18" "32" "6" 。在图像中反应出颜色更深。
+
+- 发现2:无论总楼层数是多少，低楼层的房屋价格区间范围较小，平方单价略偏高，说明议价能力较强，价格波动幅度不大。
+
+## 是否近地铁、能否vr看装修对关注人数的影响
+```{r}
+#将缺失值剔除，结果储存在new中
+new <- lj %>%
+  filter(is.na(near_subway)|near_subway=="近地铁")%>%
+filter(is.na(vr)|vr=="VR看装修")
+newfo <- new %>% filter(followers<20)
+#作图，初步分析
+ggplot(newfo, aes(followers)) +   
+  geom_bar(fill = "steelblue") +    
+  scale_y_continuous(labels = comma) +    
+  theme_minimal() +    
+  labs(x = "关注人数",    
+       y = "房屋数",    
+       title = "是否近地铁、能否vr看房对关注人数的影响")+
+facet_wrap(~vr + near_subway, nrow = 2)
+
+#进一步检查是否进地铁对关注人数的影响
+new$near_subway <- as.numeric(new$near_subway)
+c_nearsubway <- chisq.test(
+  table(new$near_subway,new$followers))
+print(c_nearsubway)
+
+new$vr <- as.numeric(new$vr)
+c_vr <- chisq.test(
+  table(new$vr,new$followers))
+print(c_vr)
+
+```
+
+发现：
+
+- 发现:从直方图以及卡方检测结果，是否近地铁、能否vr看装修这类信息对关注人数影响显著
+
+## 判断是否满2年对二手房总价影响是否显著
+
+```{r}
+#剔除缺失值
+new2 <- lj %>%  
+  filter(!is.na(price_ttl))  
+#作图  
+ggplot(new2, aes(x = if_2y, y = price_ttl)) +  
+  geom_boxplot() +scale_y_continuous(labels = comma) +    
+  theme_minimal() +    
+  labs(x = "房本是否满2年",    
+       y = "房屋总价",    
+       title = "房本是否满2年对房屋总价的影响")+
+  coord_flip()
+```
+发现：
+
+- 发现:挂售二手房中，半数房屋拿证满2年。其中拿证已满2年的房屋总价集中度更强一些。
+
+##根据二手房在各区域分布数量与房屋单价的关系,分析地区挂牌房屋数量与单价的关系
+
+```{r}
+##建一个新表，分别为二手房区域、套数、平均单价、平均面积
+region_p <- lj %>% 
+  group_by(property_region) %>% 
+  summarise(avg_price = mean(price_sqm, na.rm = TRUE))
+
+region_n <- lj %>% 
+  group_by(property_region) %>% 
+  summarise(n_region = n())
+
+region_a <- lj %>% 
+  group_by(property_region) %>% 
+  summarise(avg_area = mean(building_area, na.rm = TRUE))
+
+region1<- merge(region_n,region_p,by="property_region")
+regionall <- merge(region1,region_a,by="property_region")
+
+ggplot(regionall,aes(x=n_region,y=avg_price))+geom_smooth()+
+  labs(title = "平均单价受所在区域在售二手房套数的影响", x = "所在区域在售二手房套数", y = "平均单价")+theme_minimal() 
+ggplot(regionall,aes(x=n_region,y=avg_area))+geom_smooth()+
+  labs(title = "平均单价受所在区域在售二手房套数的影响", x = "所在区域在售二手房套数", y = "平均面积")+theme_minimal() 
+
+  
+```
+
+
+发现：
+
+- 发现1:在售房屋平均单价随着区域套数增长，表现出先上升后平缓下降的趋势；同时套数多的区域，可选择的不同价位二手房更多。
+
+- 发现2：在售房屋平均面积随着区域套数增长，表现出先下降后平缓上升的趋势；同时套数多的区域，可选择的面积更多。
+
